@@ -51,35 +51,6 @@ CREATE TABLE IF NOT EXISTS group_members (
 CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
 CREATE INDEX IF NOT EXISTS idx_group_members_member ON group_members(member_id, member_type);
 
--- 消息表 (支持 1v1 和群聊)
-CREATE TABLE IF NOT EXISTS messages (
-  id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
-  sender_id   TEXT NOT NULL,
-  sender_type TEXT NOT NULL DEFAULT 'user' CHECK(sender_type IN ('user', 'bot')),
-  receiver_id TEXT,
-  group_id    TEXT REFERENCES groups(id),
-  content     TEXT,
-  audio_url   TEXT,
-  audio_dur   INTEGER,
-  msg_type    TEXT NOT NULL DEFAULT 'text' CHECK(msg_type IN ('text', 'audio')),
-  is_bot      INTEGER NOT NULL DEFAULT 0,
-  status      TEXT NOT NULL DEFAULT 'sent' CHECK(status IN ('sent', 'delivered', 'read')),
-  created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
-  CHECK (
-    (group_id IS NOT NULL AND receiver_id IS NULL) OR
-    (group_id IS NULL AND receiver_id IS NOT NULL)
-  )
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_1v1 ON messages(
-  MIN(sender_id, receiver_id), MAX(sender_id, receiver_id), created_at DESC
-) WHERE group_id IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id, created_at DESC)
-  WHERE group_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id, created_at DESC);
-
 -- 联系人关系 (双向, 仅 user-to-user)
 CREATE TABLE IF NOT EXISTS contacts (
   user_id    TEXT NOT NULL REFERENCES users(id),
