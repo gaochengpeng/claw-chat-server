@@ -4,18 +4,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --watch src/index.ts",
-    "start": "bun src/index.ts",
-    "db:init": "bun src/db/init.ts"
+    "build": "tsc && cp src/db/schema.sql dist/db/schema.sql",
+    "start": "node dist/index.js",
+    "dev": "tsc && cp src/db/schema.sql dist/db/schema.sql && node dist/index.js",
+    "invite:add": "node dist/db/createInviteCodes.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.7",
     "jose": "^6.0.0",
-    "bcrypt": "^5.1.1"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.12",
-    "@types/bcrypt": "^5.0.2",
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.13",
     "typescript": "^5.7.0"
   }
 }

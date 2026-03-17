@@ -3,18 +3,12 @@
  * 处理 1v1 和群聊中的 Bot 消息转发
  */
 
-import type { ServerWebSocket } from "bun";
+import type { WebSocket as WSWebSocket } from "ws";
 import { getDB } from "../db/database.js";
 import { getGatewayConnection, sendToGateway } from "./gateway-pool.js";
 import { shouldForwardToBot } from "./filter.js";
 
-interface BotProxyTarget {
-  botId: string;
-  ws: ServerWebSocket<any>;       // 发送者的 WS 连接
-  senderId: string;
-  groupId?: string;               // 群聊时
-  broadcastToGroup?: (msg: object) => void;  // 群聊广播函数
-}
+type AppWebSocket = WSWebSocket & { data: any };
 
 /**
  * 处理发给 Bot 的 1v1 消息
@@ -23,7 +17,7 @@ export async function proxyToBot(
   botId: string,
   content: string,
   senderId: string,
-  senderWs: ServerWebSocket<any>,
+  senderWs: AppWebSocket,
   clientId: string
 ): Promise<void> {
   const db = getDB();
@@ -52,14 +46,12 @@ export async function proxyToBot(
     const conn = await getGatewayConnection(botId);
 
     const fullText = await sendToGateway(conn, content, (chunk, done) => {
-      // 流式推送给用户
       senderWs.send(JSON.stringify({
         type: "bot.chunk",
         botId,
         conversationId: botId,
         text: chunk,
         done,
-        ...(done ? {} : {}),
       }));
     });
 
@@ -71,7 +63,6 @@ export async function proxyToBot(
         RETURNING id, created_at
       `).get(botId, senderId, fullText) as { id: string; created_at: number };
 
-      // 发送完整消息
       senderWs.send(JSON.stringify({
         type: "message",
         id: botMsg.id,
@@ -95,7 +86,6 @@ export async function proxyToBot(
 
 /**
  * 处理群聊消息中的 Bot 转发
- * 群消息已广播给人类成员后，调用此函数转发给群内 Bot
  */
 export async function forwardGroupMessageToBots(
   groupId: string,
@@ -104,12 +94,10 @@ export async function forwardGroupMessageToBots(
   senderType: string,
   broadcastToGroup: (msg: object) => void
 ): Promise<void> {
-  // 过滤检查
   if (!shouldForwardToBot(content, senderType)) return;
 
   const db = getDB();
 
-  // 查找群内所有 Bot 成员
   const bots = db.prepare(`
     SELECT b.id, b.name FROM bots b
     JOIN group_members gm ON gm.member_id = b.id AND gm.member_type = 'bot'
@@ -118,13 +106,11 @@ export async function forwardGroupMessageToBots(
 
   if (bots.length === 0) return;
 
-  // 并行转发给所有 Bot（但每个 Bot 串行处理）
   const tasks = bots.map(async (bot) => {
     try {
       const conn = await getGatewayConnection(bot.id);
 
       const fullText = await sendToGateway(conn, content, (chunk, done) => {
-        // 流式推送给群
         broadcastToGroup({
           type: "bot.chunk",
           botId: bot.id,
@@ -134,7 +120,6 @@ export async function forwardGroupMessageToBots(
         });
       });
 
-      // 存储 Bot 回复
       if (fullText.trim()) {
         const botMsg = db.prepare(`
           INSERT INTO messages (sender_id, sender_type, group_id, content, msg_type, is_bot)
@@ -142,7 +127,6 @@ export async function forwardGroupMessageToBots(
           RETURNING id, created_at
         `).get(bot.id, groupId, fullText) as { id: string; created_at: number };
 
-        // 广播完整消息给群
         broadcastToGroup({
           type: "message",
           id: botMsg.id,
@@ -156,7 +140,6 @@ export async function forwardGroupMessageToBots(
         });
       }
     } catch (e) {
-      // Bot 不可达，通知群
       broadcastToGroup({
         type: "bot.status",
         botId: bot.id,

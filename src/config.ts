@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { mkdirSync } from "fs";
 import { resolve } from "path";
 

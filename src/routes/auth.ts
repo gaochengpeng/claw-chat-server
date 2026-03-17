@@ -10,9 +10,9 @@ export async function handleAuth(req: Request, path: string): Promise<Response> 
   const body = await req.json() as Record<string, string>;
 
   if (path === "/api/auth/register") {
-    const { username, password, nickname } = body;
-    if (!username || !password || !nickname) {
-      return Response.json({ error: "username, password, nickname required" }, { status: 400 });
+    const { username, password, nickname, inviteCode } = body;
+    if (!username || !password || !nickname || !inviteCode) {
+      return Response.json({ error: "username, password, nickname, inviteCode required" }, { status: 400 });
     }
 
     const db = getDB();
@@ -21,14 +21,59 @@ export async function handleAuth(req: Request, path: string): Promise<Response> 
       return Response.json({ error: "username already taken" }, { status: 409 });
     }
 
-    const hashed = await hashPassword(password);
-    const stmt = db.prepare(
-      "INSERT INTO users (username, password, nickname) VALUES (?, ?, ?) RETURNING id, username, nickname"
-    );
-    const user = stmt.get(username, hashed, nickname) as { id: string; username: string; nickname: string };
-    const token = await signToken({ sub: user.id, username: user.username });
+    const invite = db.prepare(
+      "SELECT code, used_at, used_by FROM invite_codes WHERE code = ?"
+    ).get(inviteCode) as { code: string; used_at: number | null; used_by: string | null } | undefined;
 
-    return Response.json({ token, user: { id: user.id, username: user.username, nickname: user.nickname } });
+    if (!invite) {
+      return Response.json({ error: "invalid invite code" }, { status: 403 });
+    }
+
+    if (invite.used_at || invite.used_by) {
+      return Response.json({ error: "invite code already used" }, { status: 409 });
+    }
+
+    const hashed = await hashPassword(password);
+
+    const registerWithInvite = db.transaction((username: string, hashed: string, nickname: string, inviteCode: string) => {
+      const freshInvite = db.prepare(
+        "SELECT code, used_at, used_by FROM invite_codes WHERE code = ?"
+      ).get(inviteCode) as { code: string; used_at: number | null; used_by: string | null } | undefined;
+
+      if (!freshInvite) {
+        throw new Error("INVITE_INVALID");
+      }
+
+      if (freshInvite.used_at || freshInvite.used_by) {
+        throw new Error("INVITE_USED");
+      }
+
+      const user = db.prepare(
+        "INSERT INTO users (username, password, nickname) VALUES (?, ?, ?) RETURNING id, username, nickname"
+      ).get(username, hashed, nickname) as { id: string; username: string; nickname: string };
+
+      db.prepare(
+        "UPDATE invite_codes SET used_at = unixepoch(), used_by = ? WHERE code = ? AND used_at IS NULL AND used_by IS NULL"
+      ).run(user.id, inviteCode);
+
+      return user;
+    });
+
+    try {
+      const user = registerWithInvite(username, hashed, nickname, inviteCode) as {
+        id: string; username: string; nickname: string;
+      };
+      const token = await signToken({ sub: user.id, username: user.username });
+      return Response.json({ token, user: { id: user.id, username: user.username, nickname: user.nickname } });
+    } catch (error) {
+      if ((error as Error).message === "INVITE_INVALID") {
+        return Response.json({ error: "invalid invite code" }, { status: 403 });
+      }
+      if ((error as Error).message === "INVITE_USED") {
+        return Response.json({ error: "invite code already used" }, { status: 409 });
+      }
+      throw error;
+    }
   }
 
   if (path === "/api/auth/login") {

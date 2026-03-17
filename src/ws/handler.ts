@@ -1,4 +1,4 @@
-import type { ServerWebSocket } from "bun";
+import type { WebSocket as WSWebSocket } from "ws";
 import { verifyToken, type JWTPayload } from "../auth/jwt.js";
 import { getDB } from "../db/database.js";
 import { proxyToBot, forwardGroupMessageToBots } from "../bot/proxy.js";
@@ -7,16 +7,18 @@ interface WSData {
   user: JWTPayload | null;
 }
 
+type AppWebSocket = WSWebSocket & { data: WSData };
+
 // userId → Set<ws>
-const connections = new Map<string, Set<ServerWebSocket<WSData>>>();
+const connections = new Map<string, Set<AppWebSocket>>();
 
 export function getWSHandler() {
   return {
-    open(ws: ServerWebSocket<WSData>) {
+    open(ws: AppWebSocket) {
       ws.data = { user: null };
     },
 
-    async message(ws: ServerWebSocket<WSData>, raw: string | Buffer) {
+    async message(ws: AppWebSocket, raw: string | Buffer) {
       const text = typeof raw === "string" ? raw : raw.toString();
       let msg: Record<string, unknown>;
       try {
@@ -74,7 +76,7 @@ export function getWSHandler() {
       }
     },
 
-    close(ws: ServerWebSocket<WSData>, code: number, reason: string) {
+    close(ws: AppWebSocket, code: number, reason: string) {
       const user = ws.data.user;
       if (user) {
         const set = connections.get(user.sub);
@@ -93,7 +95,7 @@ export function getWSHandler() {
 // ─── 1v1 人对人消息（纯转发，不存储）───
 
 function handleChatMessage(
-  ws: ServerWebSocket<WSData>,
+  ws: AppWebSocket,
   sender: JWTPayload,
   msg: Record<string, unknown>
 ) {
@@ -132,7 +134,7 @@ function handleChatMessage(
 // ─── 1v1 Bot 消息（代理转发，不存储）───
 
 async function handleBotMessage(
-  ws: ServerWebSocket<WSData>,
+  ws: AppWebSocket,
   sender: JWTPayload,
   msg: Record<string, unknown>
 ) {
@@ -148,7 +150,7 @@ async function handleBotMessage(
 // ─── 群聊消息（广播转发，不存储）───
 
 async function handleGroupMessage(
-  ws: ServerWebSocket<WSData>,
+  ws: AppWebSocket,
   sender: JWTPayload,
   msg: Record<string, unknown>
 ) {

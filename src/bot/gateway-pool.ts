@@ -3,6 +3,7 @@
  * 每个 Bot 维护一个到其 Gateway 的 WS 连接
  */
 
+import WebSocket from "ws";
 import { getDB } from "../db/database.js";
 
 interface GatewayConnection {

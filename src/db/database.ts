@@ -1,22 +1,25 @@
-import { Database } from "bun:sqlite";
+import Database from "better-sqlite3";
 import { readFileSync } from "fs";
-import { resolve } from "path";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 import { config } from "../config.js";
 
-let db: Database | null = null;
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export function getDB(): Database {
+let db: Database.Database | null = null;
+
+export function getDB(): Database.Database {
   if (!db) {
-    db = new Database(config.dbPath, { create: true });
-    db.exec("PRAGMA journal_mode = WAL");
-    db.exec("PRAGMA foreign_keys = ON");
+    db = new Database(config.dbPath);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
   }
   return db;
 }
 
 export function initDB() {
   const d = getDB();
-  const schema = readFileSync(resolve(import.meta.dir, "schema.sql"), "utf-8");
+  const schema = readFileSync(resolve(__dirname, "schema.sql"), "utf-8");
   d.exec(schema);
   console.log("✅ Database initialized");
 }
