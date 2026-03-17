@@ -19,10 +19,11 @@ export async function handleBots(req: Request, path: string): Promise<Response> 
     return Response.json(rows);
   }
 
-  // GET /api/bots/mine — 我的 Bot (owner sees gatewayUrl but never token)
+  // GET /api/bots/mine — 我的 Bot (owner sees gatewayUrl and gatewayToken)
   if (path === "/api/bots/mine" && req.method === "GET") {
     const rows = db.prepare(`
       SELECT id, name, avatar_url as "avatarUrl", gateway_url as "gatewayUrl",
+             gateway_token as "gatewayToken",
              is_public as "isPublic", is_online as "isOnline"
       FROM bots WHERE owner_id = ? ORDER BY created_at
     `).all(user.sub);

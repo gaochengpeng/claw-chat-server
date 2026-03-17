@@ -76,7 +76,16 @@ async function createConnection(
       try { ws.close(); } catch {}
     }, CONNECT_TIMEOUT);
 
-    const ws = new WebSocket(gatewayUrl);
+    // Extract host:port for Origin header to match Gateway allowedOrigins
+    const originUrl = gatewayUrl
+      .replace("ws://", "http://")
+      .replace("wss://", "https://")
+      .replace("127.0.0.1", "139.155.128.20")
+      .replace("localhost", "139.155.128.20");
+
+    const ws = new WebSocket(gatewayUrl, {
+      headers: { Origin: originUrl },
+    });
 
     const conn: GatewayConnection = {
       ws,
@@ -94,6 +103,7 @@ async function createConnection(
     pool.set(botId, conn);
 
     ws.onopen = () => {
+      console.log(`[gateway-pool] WS open for bot ${botId}, sending connect...`);
       // 发送 connect 握手
       const connectMsg = {
         type: "req",
@@ -101,11 +111,15 @@ async function createConnection(
         method: "connect",
         params: {
           client: {
-            id: "clawchat-proxy",
+            id: "webchat",
             mode: "webchat",
+            platform: "server",
             version: "1.0.0",
             displayName: "ClawChat Bot Proxy",
           },
+          roles: ["operator"],
+          minProtocol: 3,
+          maxProtocol: 3,
           auth: gatewayToken ? { token: gatewayToken } : undefined,
         },
       };
@@ -123,6 +137,7 @@ async function createConnection(
 
       // 处理 connect 响应
       if (msg.type === "res" && msg.id === "connect-1") {
+        console.log(`[gateway-pool] connect response for bot ${botId}:`, JSON.stringify(msg).slice(0, 200));
         clearTimeout(timeout);
         if (msg.ok) {
           conn.connected = true;
