@@ -1,3 +1,6 @@
+import { webcrypto } from "crypto";
+if (!globalThis.crypto) (globalThis as any).crypto = webcrypto;
+
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import { initDB } from "./db/database.js";
@@ -10,16 +13,26 @@ import { handleBots } from "./routes/bots.js";
 import { handleGroups } from "./routes/groups.js";
 import { serveAudio } from "./audio/storage.js";
 import { getWSHandler } from "./ws/handler.js";
+import {
+  securityHeaders, corsHeaders, checkAuthRate, checkApiRate, getClientIP,
+} from "./security/index.js";
 
 // Initialize database
 initDB();
 
 const wsHandler = getWSHandler();
 
-// Helper: collect request body
+// Helper: collect request body with size limit
 async function readBody(req: import("http").IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > config.maxBodySize) {
+      throw new Error("BODY_TOO_LARGE");
+    }
+    chunks.push(chunk as Buffer);
+  }
   return Buffer.concat(chunks).toString();
 }
 
@@ -39,28 +52,56 @@ async function toWebRequest(req: import("http").IncomingMessage): Promise<Reques
 // Convert Web Response to Node response
 async function sendWebResponse(
   res: import("http").ServerResponse,
-  webRes: Response
+  webRes: Response,
+  extraHeaders: Record<string, string> = {}
 ) {
-  res.writeHead(webRes.status, Object.fromEntries(webRes.headers.entries()));
+  const headers: Record<string, string> = {
+    ...Object.fromEntries(webRes.headers.entries()),
+    ...extraHeaders,
+  };
+  res.writeHead(webRes.status, headers);
   const buf = await webRes.arrayBuffer();
   res.end(Buffer.from(buf));
 }
 
 const server = createServer(async (req, res) => {
-  try {
-    const webReq = await toWebRequest(req);
-    const url = new URL(webReq.url);
-    const path = url.pathname;
+  const ip = getClientIP(req);
+  const origin = req.headers.origin || null;
+  const secHeaders = { ...securityHeaders(), ...corsHeaders(origin) };
 
-    // CORS
-    if (webReq.method === "OPTIONS") {
-      res.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      });
+  try {
+    // CORS preflight
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, secHeaders);
       res.end();
       return;
+    }
+
+    const path = (req.url || "/").split("?")[0];
+
+    // Rate limiting
+    const isAuthPath = path.startsWith("/api/auth/");
+    if (isAuthPath && !checkAuthRate(ip)) {
+      res.writeHead(429, { ...secHeaders, "Content-Type": "application/json", "Retry-After": "60" });
+      res.end(JSON.stringify({ error: "too many requests" }));
+      return;
+    }
+    if (!isAuthPath && !checkApiRate(ip)) {
+      res.writeHead(429, { ...secHeaders, "Content-Type": "application/json", "Retry-After": "60" });
+      res.end(JSON.stringify({ error: "too many requests" }));
+      return;
+    }
+
+    let webReq: Request;
+    try {
+      webReq = await toWebRequest(req);
+    } catch (e) {
+      if ((e as Error).message === "BODY_TOO_LARGE") {
+        res.writeHead(413, { ...secHeaders, "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "request too large" }));
+        return;
+      }
+      throw e;
     }
 
     let webRes: Response;
@@ -84,12 +125,10 @@ const server = createServer(async (req, res) => {
       webRes = Response.json({ error: "not found" }, { status: 404 });
     }
 
-    // Add CORS to all responses
-    webRes.headers.set("Access-Control-Allow-Origin", "*");
-    await sendWebResponse(res, webRes);
+    await sendWebResponse(res, webRes, secHeaders);
   } catch (e) {
-    console.error("Request error:", e);
-    res.writeHead(500, { "Content-Type": "application/json" });
+    console.error("Request error:", (e as Error).message);
+    res.writeHead(500, { ...secHeaders, "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "internal server error" }));
   }
 });
@@ -101,11 +140,20 @@ wss.on("connection", (ws) => {
   const wrappedWs = Object.assign(ws, { data: { user: null } });
   wsHandler.open(wrappedWs as any);
 
+  // Auth timeout: close if not authenticated within limit
+  const authTimer = setTimeout(() => {
+    if (!wrappedWs.data.user) {
+      ws.close(4001, "auth timeout");
+    }
+  }, config.wsAuthTimeoutMs);
+
   ws.on("message", (raw) => {
+    if (wrappedWs.data.user) clearTimeout(authTimer);
     wsHandler.message(wrappedWs as any, raw.toString());
   });
 
   ws.on("close", (code, reason) => {
+    clearTimeout(authTimer);
     wsHandler.close(wrappedWs as any, code, reason.toString());
   });
 });

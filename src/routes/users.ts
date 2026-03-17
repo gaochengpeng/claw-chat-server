@@ -25,9 +25,9 @@ export async function handleUsers(req: Request, path: string): Promise<Response>
   if (path === "/api/users/search" && req.method === "GET") {
     const url = new URL(req.url);
     const q = url.searchParams.get("q") || "";
-    if (q.length < 1) return Response.json([]);
+    if (q.length < 2) return Response.json([]);
     const rows = db.prepare(
-      "SELECT id, username, nickname FROM users WHERE username LIKE ? AND id != ? LIMIT 20"
+      "SELECT id, nickname FROM users WHERE username LIKE ? AND id != ? LIMIT 10"
     ).all(`%${q}%`, user.sub);
     return Response.json(rows);
   }

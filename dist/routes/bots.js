@@ -16,7 +16,7 @@ export async function handleBots(req, path) {
     `).all(user.sub);
         return Response.json(rows);
     }
-    // GET /api/bots/mine — 我的 Bot
+    // GET /api/bots/mine — 我的 Bot (owner sees gatewayUrl but never token)
     if (path === "/api/bots/mine" && req.method === "GET") {
         const rows = db.prepare(`
       SELECT id, name, avatar_url as "avatarUrl", gateway_url as "gatewayUrl",
@@ -34,7 +34,7 @@ export async function handleBots(req, path) {
         const row = db.prepare(`
       INSERT INTO bots (owner_id, name, avatar_url, gateway_url, gateway_token, is_public)
       VALUES (?, ?, ?, ?, ?, ?)
-      RETURNING id, name, avatar_url as "avatarUrl", gateway_url as "gatewayUrl",
+      RETURNING id, name, avatar_url as "avatarUrl",
                 is_public as "isPublic", is_online as "isOnline"
     `).get(user.sub, body.name.trim(), body.avatarUrl || null, body.gatewayUrl.trim(), body.gatewayToken || null, body.isPublic !== false ? 1 : 0);
         return Response.json(row, { status: 201 });
@@ -78,7 +78,7 @@ export async function handleBots(req, path) {
         values.push(botId);
         const row = db.prepare(`
       UPDATE bots SET ${fields.join(", ")} WHERE id = ?
-      RETURNING id, name, avatar_url as "avatarUrl", gateway_url as "gatewayUrl",
+      RETURNING id, name, avatar_url as "avatarUrl",
                 is_public as "isPublic", is_online as "isOnline"
     `).get(...values);
         return Response.json(row);

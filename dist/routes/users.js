@@ -22,9 +22,9 @@ export async function handleUsers(req, path) {
     if (path === "/api/users/search" && req.method === "GET") {
         const url = new URL(req.url);
         const q = url.searchParams.get("q") || "";
-        if (q.length < 1)
+        if (q.length < 2)
             return Response.json([]);
-        const rows = db.prepare("SELECT id, username, nickname FROM users WHERE username LIKE ? AND id != ? LIMIT 20").all(`%${q}%`, user.sub);
+        const rows = db.prepare("SELECT id, nickname FROM users WHERE username LIKE ? AND id != ? LIMIT 10").all(`%${q}%`, user.sub);
         return Response.json(rows);
     }
     return Response.json({ error: "not found" }, { status: 404 });
